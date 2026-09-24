@@ -1,5 +1,11 @@
 # lsupop
 
+## Listings server
+
+The local Node.js + SQLite API lives in [server/](server/README.md). See its README
+for startup commands, endpoints, and tests. The Flutter app still uses mock data;
+connecting it to this API is the next implementation step.
+
 A new Flutter project.
 
 ## Getting Started
