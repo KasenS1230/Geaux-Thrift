@@ -8,8 +8,13 @@ From the repository root:
 
 ```powershell
 cd server
-npm start
+node src/index.js
 ```
+
+These commands require `node` on your terminal's PATH; npm is not required.
+Check with `node --version` (24 or newer). If Node is not recognized, install
+Node.js 24 LTS from https://nodejs.org/ and reopen your terminal/editor.
+If you have npm installed, `npm start` and `npm test` also work from `server/`.
 
 The API listens at `http://127.0.0.1:3000`. Stop it with Ctrl+C. On first start,
 schema migration 1 creates `server/data/listings.sqlite` and a demo seller.
@@ -83,7 +88,7 @@ also return 404. Database errors are logged locally without exposing details to 
 
 ```powershell
 cd server
-npm test
+node --test
 ```
 
 Ten HTTP integration tests cover creation/retrieval, database reopen persistence,
