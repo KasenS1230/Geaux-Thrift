@@ -7,9 +7,9 @@ import { once } from 'node:events';
 import { openDatabase } from '../src/database.js';
 import { createApp } from '../src/app.js';
 
-async function start(path = ':memory:') {
+async function start(path = ':memory:', options = {}) {
   const db = openDatabase(path);
-  const server = createApp(db);
+  const server = createApp(db, options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return {
@@ -21,6 +21,19 @@ async function start(path = ':memory:') {
   };
 }
 const item = { title: 'LSU Mug', priceCents: 800, category: 'Dorm', description: 'Purple ceramic' };
+test('CORS permits only the configured Flutter browser origin', async t => {
+  const app = await start(':memory:', { allowedOrigin: 'http://localhost:8080' });
+  t.after(app.close);
+  const response = await app.request('/listings', { method: 'OPTIONS', headers: {
+    Origin: 'http://localhost:8080', 'Access-Control-Request-Method': 'POST',
+    'Access-Control-Request-Headers': 'content-type',
+  } });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:8080');
+  assert.equal(response.headers.get('access-control-allow-headers'), 'Content-Type');
+  const denied = await app.request('/listings', { headers: { Origin: 'http://untrusted.example' } });
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+});
 function post(body) {
   return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }

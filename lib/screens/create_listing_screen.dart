@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../data/listing_repository.dart';
 import '../theme/app_theme.dart';
 
 /// The form behind the "+" button: post something for sale.
 ///
-/// TODO(team): actually save the listing (right now it just pops with a
-/// snackbar), add photo upload, and validate price formatting properly.
+/// TODO(team): add photo upload.
+
 class CreateListingScreen extends StatefulWidget {
-  const CreateListingScreen({super.key});
+  const CreateListingScreen({super.key, required this.repository});
+  final ListingRepository repository;
 
   @override
   State<CreateListingScreen> createState() => _CreateListingScreenState();
@@ -21,7 +22,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _descriptionController = TextEditingController();
 
   // 'All' is a browse filter, not a real category, so skip it here.
-  late String _category = kCategories[1];
+  late String _category = listingCategories[1];
 
   @override
   void dispose() {
@@ -31,14 +32,35 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
+  bool _saving = false;
+  String? _error;
 
-    // TODO(team): build a Listing and hand it to the repository / backend.
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Listing saved (not really — yet!)')),
-    );
+  Future<void> _submit() async {
+    if (_saving || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.create(
+        title: _titleController.text,
+        priceCents: parsePriceCents(_priceController.text)!,
+        category: _category,
+        description: _descriptionController.text,
+      );
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = error is ListingApiException
+              ? error.message
+              : 'Could not save listing. Please try again.';
+        });
+      }
+    }
   }
 
   @override
@@ -58,13 +80,18 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 decoration: BoxDecoration(
                   color: LsuColors.purple.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: LsuColors.purple.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: LsuColors.purple.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: const Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.add_a_photo_outlined,
-                        size: 36, color: LsuColors.purple),
+                    Icon(
+                      Icons.add_a_photo_outlined,
+                      size: 36,
+                      color: LsuColors.purple,
+                    ),
                     SizedBox(height: 8),
                     Text('Add photos'),
                   ],
@@ -79,12 +106,18 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 border: OutlineInputBorder(),
               ),
               validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? 'Add a title' : null,
+                  (value == null ||
+                      value.trim().isEmpty ||
+                      value.trim().length > 120)
+                  ? 'Enter a title of 1–120 characters'
+                  : null,
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _priceController,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Price',
                 prefixText: '\$ ',
@@ -92,8 +125,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) return 'Add a price';
-                if (double.tryParse(value.trim()) == null) {
-                  return 'Numbers only';
+                if (parsePriceCents(value) == null) {
+                  return 'Use a price from 0 to 1,000,000 with at most 2 decimals';
                 }
                 return null;
               },
@@ -106,7 +139,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 border: OutlineInputBorder(),
               ),
               items: [
-                for (final category in kCategories.skip(1))
+                for (final category in listingCategories.skip(1))
                   DropdownMenuItem(value: category, child: Text(category)),
               ],
               onChanged: (value) => setState(() => _category = value!),
@@ -115,6 +148,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             TextFormField(
               controller: _descriptionController,
               maxLines: 4,
+              maxLength: 5000,
               decoration: const InputDecoration(
                 labelText: 'Description',
                 alignLabelWithHint: true,
@@ -122,11 +156,16 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            if (_error != null)
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             FilledButton(
-              onPressed: _submit,
-              child: const Padding(
+              onPressed: _saving ? null : _submit,
+              child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Post listing'),
+                child: Text(_saving ? 'Saving…' : 'Post listing'),
               ),
             ),
           ],

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../data/listing_repository.dart';
+
 import 'browse_tab.dart';
 import 'create_listing_screen.dart';
 import 'messages_tab.dart';
@@ -7,7 +9,8 @@ import 'messages_tab.dart';
 /// The main page: a search bar on top, two tabs (Browse / Messages), and the
 /// "+" button in the bottom right for posting something to sell.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.repository});
+  final ListingRepository? repository;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -15,12 +18,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabController =
-      TabController(length: 2, vsync: this)..addListener(_onTabChanged);
+  late final TabController _tabController = TabController(
+    length: 2,
+    vsync: this,
+  )..addListener(_onTabChanged);
   final TextEditingController _searchController = TextEditingController();
 
   /// What the user has typed. Both tabs filter off this.
   String _query = '';
+  late final ListingRepository _repository =
+      widget.repository ?? ListingRepository();
+  int _revision = 0;
 
   void _onTabChanged() {
     // Rebuild so the FAB shows only on the browse tab.
@@ -32,13 +40,21 @@ class _HomeScreenState extends State<HomeScreen>
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _searchController.dispose();
+    if (widget.repository == null) _repository.close();
     super.dispose();
   }
 
   Future<void> _openCreateListing() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const CreateListingScreen()),
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => CreateListingScreen(repository: _repository),
+      ),
     );
+    if (saved == true && mounted) {
+      setState(() => _revision++);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Listing saved')));
+    }
   }
 
   @override
@@ -67,7 +83,11 @@ class _HomeScreenState extends State<HomeScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          BrowseTab(query: _query),
+          BrowseTab(
+            query: _query,
+            repository: _repository,
+            revision: _revision,
+          ),
           MessagesTab(query: _query),
         ],
       ),

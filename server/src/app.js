@@ -62,9 +62,16 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
-export function createApp(db) {
+export function createApp(db, { allowedOrigin = '' } = {}) {
   return createServer(async (req, res) => {
     try {
+      res.setHeader('Vary', 'Origin');
+      if (allowedOrigin && req.headers.origin === allowedOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+      }
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/health' && req.method === 'GET') {
         db.prepare('SELECT 1').get();

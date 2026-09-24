@@ -26,12 +26,12 @@ to the server source; custom relative paths resolve from the working directory).
 Use `HOST=0.0.0.0` only when you need access from another device on your local network.
 Android emulator clients can use `http://10.0.2.2:3000`; physical devices use the
 computer's LAN address with a suitable host binding and firewall configuration.
-Flutter networking and platform HTTP configuration belong to the next change.
+See the root README for Flutter networking and platform HTTP configuration.
 
 This is an unauthenticated development server: every new listing is assigned to
 `demo-seller` / `Demo Seller`. Clients cannot choose seller IDs. Add authentication
 and server-enforced ownership before public deployment. Photo uploads and chat
-are outside this version. Browser CORS support is not enabled.
+are outside this version. Browser CORS is disabled by default. Set ALLOWED_ORIGIN to the exact Flutter web origin (for example http://localhost:8080) to enable it, then restart the server.
 
 ## API
 
@@ -68,7 +68,7 @@ Optional: description (max 5000, default empty), condition (max 50, default
 `Good`), size (nonblank max 30 or null). Text is trimmed. Unknown fields are rejected.
 The response also contains `id` (UUID), `sellerId`, `sellerName`, `createdAt`
 (UTC ISO timestamp), and `imageUrl` (currently null). Money uses integer cents
-throughout; the Flutter adapter will convert to its display model in the next commit.
+throughout; the Flutter repository converts to dollars for its display model.
 
 Example from another PowerShell terminal:
 
@@ -91,7 +91,7 @@ cd server
 node --test
 ```
 
-Ten HTTP integration tests cover creation/retrieval, database reopen persistence,
+Eleven HTTP integration tests cover creation/retrieval, database reopen persistence,
 combined filters, literal searches, pagination, invalid input, malformed/oversized
 bodies, and missing resources. Tests use isolated databases, never the development
 database. Migration changes should increment `PRAGMA user_version` and preserve data.
