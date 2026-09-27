@@ -25,6 +25,30 @@ int? parsePriceCents(String input) {
   return cents <= 100000000 ? cents : null;
 }
 
+/// Photo types the API accepts, keyed by the file extension a picker reports.
+const _imageContentTypes = {
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'png': 'image/png',
+  'webp': 'image/webp',
+};
+const maxImageBytes = 5 * 1024 * 1024;
+
+/// The content type to upload a picked photo as, or null when the API would
+/// reject it.
+///
+/// Pickers are inconsistent about what they report: some hand back a filename
+/// with no useful extension, others a bare MIME type, so try both.
+String? imageContentType({String? filename, String? mimeType}) {
+  final dot = filename?.lastIndexOf('.') ?? -1;
+  final byExtension = dot < 0
+      ? null
+      : _imageContentTypes[filename!.substring(dot + 1).toLowerCase()];
+  if (byExtension != null) return byExtension;
+  final declared = mimeType?.split(';').first.trim().toLowerCase();
+  return _imageContentTypes.containsValue(declared) ? declared : null;
+}
+
 class ListingApiException implements Exception {
   const ListingApiException(this.message);
   final String message;
@@ -56,6 +80,10 @@ class ListingRepository {
     String path, {
     Map<String, String>? query,
     Map<String, dynamic>? body,
+    Uint8List? bytes,
+    String contentType = 'application/json',
+    Duration timeout = const Duration(seconds: 10),
+    String? failureMessage,
   }) async {
     try {
       final uri = _base.replace(
@@ -66,14 +94,15 @@ class ListingRepository {
           await (method == 'POST'
                   ? _client.post(
                       uri,
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode(body),
+                      headers: {'Content-Type': contentType},
+                      body: bytes ?? jsonEncode(body),
                     )
                   : _client.get(uri))
-              .timeout(const Duration(seconds: 10));
+              .timeout(timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw const ListingApiException(
-          'The server could not complete the request. Please try again.',
+        throw ListingApiException(
+          failureMessage ??
+              'The server could not complete the request. Please try again.',
         );
       }
       return jsonDecode(response.body);
@@ -112,8 +141,37 @@ class ListingRepository {
       },
     );
     return (data['listings'] as List)
-        .map((json) => Listing.fromJson(json as Map<String, dynamic>))
+        .map(
+          (json) =>
+              Listing.fromJson(json as Map<String, dynamic>, baseUrl: _base),
+        )
         .toList();
+  }
+
+  /// Stores [bytes] as a photo and returns the server path to hand to [create].
+  ///
+  /// The path is relative (`/images/<id>.jpg`); only the server decides what a
+  /// listing's photo is called.
+  Future<String> uploadImage(
+    Uint8List bytes, {
+    required String contentType,
+  }) async {
+    if (!_imageContentTypes.containsValue(contentType)) {
+      throw const ListingApiException('Choose a JPEG, PNG or WebP photo.');
+    }
+    if (bytes.length > maxImageBytes) {
+      throw const ListingApiException('That photo is larger than 5 MB.');
+    }
+    final data = await _request(
+      'POST',
+      '/images',
+      bytes: bytes,
+      contentType: contentType,
+      timeout: const Duration(seconds: 30),
+      failureMessage:
+          'The server would not accept that photo. Try another one.',
+    );
+    return (data as Map<String, dynamic>)['url'] as String;
   }
 
   Future<Listing> create({
@@ -121,6 +179,7 @@ class ListingRepository {
     required int priceCents,
     required String category,
     String description = '',
+    String? imageUrl,
   }) async {
     final data = await _request(
       'POST',
@@ -130,8 +189,9 @@ class ListingRepository {
         'priceCents': priceCents,
         'category': category,
         'description': description.trim(),
+        'imageUrl': ?imageUrl,
       },
     );
-    return Listing.fromJson(data as Map<String, dynamic>);
+    return Listing.fromJson(data as Map<String, dynamic>, baseUrl: _base);
   }
 }

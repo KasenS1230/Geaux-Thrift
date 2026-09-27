@@ -9,7 +9,8 @@ import { createApp } from '../src/app.js';
 
 async function start(path = ':memory:', options = {}) {
   const db = openDatabase(path);
-  const server = createApp(db, options);
+  // Never let a test write uploads into the real server/data/images directory.
+  const server = createApp(db, { imageDir: mkdtempSync(join(tmpdir(), 'lsupop-images-')), ...options });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return {
@@ -131,5 +132,66 @@ test('unknown resources return 404', async t => {
     const response = await app.request(path);
     assert.equal(response.status, 404);
     assert.equal((await response.json()).error.code, 'not_found');
+  }
+});
+
+const pngBytes = Buffer.from(
+  '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
+  '1f15c4890000000a49444154789c6360000002000100ffff0300000600' +
+  '05572f9f3c0000000049454e44ae426082', 'hex');
+function postImage(bytes, type = 'image/png') {
+  return { method: 'POST', headers: { 'Content-Type': type }, body: bytes };
+}
+test('uploads an image, serves it back and attaches it to a listing', async t => {
+  const app = await fixture(t);
+  const upload = await app.request('/images', postImage(pngBytes));
+  assert.equal(upload.status, 201);
+  const { url } = await upload.json();
+  assert.match(url, /^\/images\/[0-9a-f-]{36}\.png$/);
+  assert.equal(upload.headers.get('location'), url);
+
+  const served = await app.request(url);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), pngBytes);
+
+  const saved = await (await app.request('/listings', post({ ...item, imageUrl: url }))).json();
+  assert.equal(saved.imageUrl, url);
+  assert.equal((await (await app.request('/listings')).json()).listings[0].imageUrl, url);
+});
+test('listings without a photo keep a null imageUrl', async t => {
+  const app = await fixture(t);
+  const saved = await (await app.request('/listings', post(item))).json();
+  assert.equal(saved.imageUrl, null);
+});
+test('rejects uploads that are not real images of a supported type', async t => {
+  const app = await fixture(t);
+  const cases = [
+    [postImage(pngBytes, 'image/gif'), 415],
+    [postImage(pngBytes, 'application/json'), 415],
+    [postImage(Buffer.from('<?php ?>'), 'image/png'), 400],   // mislabelled bytes
+    [postImage(Buffer.alloc(0)), 400],
+    [postImage(Buffer.alloc(5 * 1024 * 1024 + 1)), 413],
+  ];
+  for (const [options, status] of cases) {
+    const response = await app.request('/images', options);
+    assert.equal(response.status, status, `${options.headers['Content-Type']} ${status}`);
+    assert.equal(typeof (await response.json()).error.message, 'string');
+  }
+});
+test('rejects listing imageUrls the server did not issue', async t => {
+  const app = await fixture(t);
+  for (const imageUrl of ['/images/../database.js', 'http://evil.example/x.png',
+    '/images/not-a-uuid.png', '/images/00000000-0000-4000-8000-000000000000.gif', 42]) {
+    const response = await app.request('/listings', post({ ...item, imageUrl }));
+    assert.equal(response.status, 400, String(imageUrl));
+  }
+  assert.equal((await (await app.request('/listings')).json()).listings.length, 0);
+});
+test('unknown or missing images are 404, not server errors', async t => {
+  const app = await fixture(t);
+  for (const path of ['/images/00000000-0000-4000-8000-000000000000.png',
+    '/images/%2e%2e%2fdatabase.js', '/images/']) {
+    assert.equal((await app.request(path)).status, 404, path);
   }
 });

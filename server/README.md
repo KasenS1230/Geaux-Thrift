@@ -22,7 +22,8 @@ Listings start empty and persist across restarts. Database files are ignored by 
 
 Optional environment variables: `PORT` (default `3000`), `HOST` (default
 `127.0.0.1`), `DB_PATH` (default `server/data/listings.sqlite`, resolved relative
-to the server source; custom relative paths resolve from the working directory).
+to the server source; custom relative paths resolve from the working directory),
+`IMAGE_DIR` (default `server/data/images`, created on start; also ignored by Git).
 Use `HOST=0.0.0.0` only when you need access from another device on your local network.
 Android emulator clients can use `http://10.0.2.2:3000`; physical devices use the
 computer's LAN address with a suitable host binding and firewall configuration.
@@ -30,8 +31,9 @@ See the root README for Flutter networking and platform HTTP configuration.
 
 This is an unauthenticated development server: every new listing is assigned to
 `demo-seller` / `Demo Seller`. Clients cannot choose seller IDs. Add authentication
-and server-enforced ownership before public deployment. Photo uploads and chat
-are outside this version. Browser CORS is disabled by default. Set ALLOWED_ORIGIN to the exact Flutter web origin (for example http://localhost:8080) to enable it, then restart the server.
+and server-enforced ownership before public deployment. Uploaded photos are
+public to anyone who knows their URL, and nothing deletes them yet. Chat is
+outside this version. Browser CORS is disabled by default. Set ALLOWED_ORIGIN to the exact Flutter web origin (for example http://localhost:8080) to enable it, then restart the server.
 
 ## API
 
@@ -41,6 +43,8 @@ are outside this version. Browser CORS is disabled by default. Set ALLOWED_ORIGI
 | GET | `/listings` | `{ "listings": [...], "limit": 50, "offset": 0 }` |
 | GET | `/listings/:id` | One listing, or 404 |
 | POST | `/listings` | Creates a listing; returns 201 and a Location header |
+| POST | `/images` | Stores a photo; returns 201 and `{ "url": "/images/<uuid>.jpg" }` |
+| GET | `/images/:name` | The stored photo bytes, or 404 |
 
 GET `/listings` accepts optional `q`, `category`, `minPriceCents`,
 `maxPriceCents`, `limit` (1–100, default 50), and `offset` (0–1000000).
@@ -66,9 +70,28 @@ Required: nonblank title (max 120 characters), integer `priceCents` between 0 an
 100000000, and category (`Apparel`, `Game Day`, `Dorm`, `Tickets`, `Books`).
 Optional: description (max 5000, default empty), condition (max 50, default
 `Good`), size (nonblank max 30 or null). Text is trimmed. Unknown fields are rejected.
+Optional `imageUrl` must be a path returned by `POST /images`; anything else is
+rejected, so a listing can only point at a photo this server stored.
 The response also contains `id` (UUID), `sellerId`, `sellerName`, `createdAt`
-(UTC ISO timestamp), and `imageUrl` (currently null). Money uses integer cents
+(UTC ISO timestamp), and `imageUrl` (null when no photo was attached). Money uses integer cents
 throughout; the Flutter repository converts to dollars for its display model.
+
+### Photos
+
+POST `/images` takes the raw image bytes as the body — no multipart form — with
+`Content-Type: image/jpeg`, `image/png`, or `image/webp`, at most 5 MiB. The
+declared type must match the file's leading bytes, so a mislabelled file is
+rejected with 400. Files are written to `IMAGE_DIR` under a generated UUID name;
+the client never chooses the name. Attach the returned `url` to a listing:
+
+```powershell
+$photo = Invoke-RestMethod http://127.0.0.1:3000/images -Method Post -ContentType 'image/jpeg' -InFile .\tiger.jpg
+$body = @{ title = 'Tiger tee'; priceCents = 1200; category = 'Apparel'; imageUrl = $photo.url } | ConvertTo-Json
+Invoke-RestMethod http://127.0.0.1:3000/listings -Method Post -ContentType 'application/json' -Body $body
+```
+
+GET `/images/:name` serves the bytes with a one-year immutable cache header;
+names that do not look like `<uuid>.jpg|png|webp` are 404, never a file read.
 
 Example from another PowerShell terminal:
 
@@ -91,7 +114,8 @@ cd server
 node --test
 ```
 
-Eleven HTTP integration tests cover creation/retrieval, database reopen persistence,
+Sixteen HTTP integration tests cover creation/retrieval, database reopen persistence,
 combined filters, literal searches, pagination, invalid input, malformed/oversized
-bodies, and missing resources. Tests use isolated databases, never the development
-database. Migration changes should increment `PRAGMA user_version` and preserve data.
+bodies, missing resources, and the photo upload/serve path including mislabelled,
+oversized and forged image references. Tests use isolated databases and temporary image
+directories, never the development ones. Migration changes should increment `PRAGMA user_version` and preserve data.
