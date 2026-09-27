@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/listing.dart';
 import '../theme/app_theme.dart';
+import 'listing_photo.dart';
 
 /// One item tile in the browse grid.
 class ListingCard extends StatelessWidget {
@@ -18,18 +19,7 @@ class ListingCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // TODO(team): swap for the real photo once listings carry images.
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                color: LsuColors.purple.withValues(alpha: 0.08),
-                child: const Icon(
-                  Icons.photo_outlined,
-                  size: 40,
-                  color: LsuColors.purple,
-                ),
-              ),
-            ),
+            Expanded(child: ListingPhoto(imageUrl: listing.imageUrl)),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Column(

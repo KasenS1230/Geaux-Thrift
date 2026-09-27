@@ -1,8 +1,8 @@
 # LSU Pop
 
 Flutter marketplace with a Node.js + SQLite listings server. Browsing, keyword
-search, category/price filters, and posting use the API. Messages still use demo
-data; authentication and photo uploads are future work.
+search, category/price filters, and posting a listing with one photo all use the
+API. Messages still use demo data; authentication is future work.
 
 ## Run locally
 

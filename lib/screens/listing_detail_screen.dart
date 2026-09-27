@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../models/listing.dart';
 import '../theme/app_theme.dart';
+import '../widgets/listing_photo.dart';
 
 /// Full page for one item. This is where the "more information about the item"
 /// lives — right now it shows what the model carries.
 ///
-/// TODO(team): photo carousel, seller profile link, save/favorite button,
-/// "similar items" row, and report-listing option.
+/// TODO(team): photo carousel (listings carry one photo today), seller profile
+/// link, save/favorite button, "similar items" row, and report-listing option.
 class ListingDetailScreen extends StatelessWidget {
   const ListingDetailScreen({super.key, required this.listing});
 
@@ -19,15 +20,9 @@ class ListingDetailScreen extends StatelessWidget {
       appBar: AppBar(title: Text(listing.title)),
       body: ListView(
         children: [
-          // TODO(team): replace with the real image / carousel.
-          Container(
+          SizedBox(
             height: 260,
-            color: LsuColors.purple.withValues(alpha: 0.08),
-            child: const Icon(
-              Icons.photo_outlined,
-              size: 72,
-              color: LsuColors.purple,
-            ),
+            child: ListingPhoto(imageUrl: listing.imageUrl, iconSize: 72),
           ),
           Padding(
             padding: const EdgeInsets.all(16),

@@ -25,20 +25,28 @@ class Listing {
   final String condition;
   final String description;
 
-  /// TODO(team): real photos. For now cards draw a placeholder box.
+  /// Absolute URL of the listing photo, or null when the seller posted none.
   final String? imageUrl;
 
-  factory Listing.fromJson(Map<String, dynamic> json) => Listing(
-    id: json['id'] as String,
-    title: json['title'] as String,
-    price: (json['priceCents'] as int) / 100,
-    sellerName: json['sellerName'] as String,
-    category: json['category'] as String,
-    size: json['size'] as String?,
-    condition: json['condition'] as String? ?? 'Good',
-    description: json['description'] as String? ?? '',
-    imageUrl: json['imageUrl'] as String?,
-  );
+  /// [baseUrl] resolves the server-relative `/images/...` path the API returns
+  /// into something [Image.network] can actually fetch.
+  factory Listing.fromJson(Map<String, dynamic> json, {Uri? baseUrl}) =>
+      Listing(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        price: (json['priceCents'] as int) / 100,
+        sellerName: json['sellerName'] as String,
+        category: json['category'] as String,
+        size: json['size'] as String?,
+        condition: json['condition'] as String? ?? 'Good',
+        description: json['description'] as String? ?? '',
+        imageUrl: switch (json['imageUrl']) {
+          final String path when baseUrl != null =>
+            baseUrl.resolve(path).toString(),
+          final String path => path,
+          _ => null,
+        },
+      );
 
   String get formattedPrice => '\$${price.toStringAsFixed(2)}';
 
