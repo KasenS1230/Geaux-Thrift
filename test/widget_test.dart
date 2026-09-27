@@ -20,8 +20,8 @@ Map<String, dynamic> listing(String title) => {
 http.Response page(List<Map<String, dynamic>> items) =>
     http.Response(jsonEncode({'listings': items}), 200);
 ListingRepository repository(
-  Future<http.Response> Function(http.Request) handler,
-) => ListingRepository(
+    Future<http.Response> Function(http.Request) handler,
+    ) => ListingRepository(
   client: MockClient(handler),
   baseUrl: 'http://localhost:3000',
 );
@@ -68,7 +68,7 @@ void main() {
   });
   test(
     'create sends integer cents and no client-controlled identity',
-    () async {
+        () async {
       final repo = repository((request) async {
         expect(request.method, 'POST');
         expect(jsonDecode(request.body), {
@@ -90,22 +90,45 @@ void main() {
       repo.close();
     },
   );
-  testWidgets('home shows server listings, tabs and sell button', (
-    tester,
-  ) async {
+  testWidgets('home shows server listings, bottom bar and sell button', (
+      tester,
+      ) async {
     final repo = repository((_) async => page([listing('Server Mug')]));
     addTearDown(repo.close);
     await tester.pumpWidget(LsuPopApp(repository: repo));
     await tester.pumpAndSettle();
-    expect(find.text('Browse'), findsOneWidget);
-    expect(find.text('Messages'), findsOneWidget);
+    expect(find.byTooltip('Browse'), findsOneWidget);
+    expect(find.byTooltip('Messages'), findsOneWidget);
+    expect(find.byTooltip('Post an item'), findsOneWidget);
     expect(find.text('Server Mug'), findsOneWidget);
-    expect(find.byType(FloatingActionButton), findsOneWidget);
+    expect(find.bySemanticsLabel('Geaux Thrift'), findsOneWidget);
+  });
+  testWidgets('bottom bar switches between browse and messages', (
+      tester,
+      ) async {
+    final repo = repository((_) async => page([listing('Server Mug')]));
+    addTearDown(repo.close);
+    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpAndSettle();
+    bool hasHint(String hint) => find
+        .byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.hintText == hint,
+    )
+        .evaluate()
+        .isNotEmpty;
+    expect(hasHint('Search LSU merch'), isTrue);
+    await tester.tap(find.byTooltip('Messages'));
+    await tester.pumpAndSettle();
+    expect(hasHint('Search messages'), isTrue);
+    expect(find.text('Server Mug'), findsNothing);
+    await tester.tap(find.byTooltip('Browse'));
+    await tester.pumpAndSettle();
+    expect(find.text('Server Mug'), findsOneWidget);
   });
   testWidgets('failed browse can retry successfully', (tester) async {
     var failed = true;
     final repo = repository(
-      (_) async => failed ? http.Response('{}', 500) : page([]),
+          (_) async => failed ? http.Response('{}', 500) : page([]),
     );
     addTearDown(repo.close);
     await tester.pumpWidget(LsuPopApp(repository: repo));
@@ -127,8 +150,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
+            (widget) =>
+        widget is TextField &&
             widget.decoration?.hintText == 'Search LSU merch',
       ),
       'mug',
@@ -137,6 +160,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
     expect(last!.queryParameters['q'], 'mug');
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Min price'),
       '5.25',
@@ -145,14 +170,47 @@ void main() {
       find.widgetWithText(TextFormField, 'Max price'),
       '10',
     );
-    await tester.tap(find.text('Apply'));
+    await tester.tap(find.text('Show results'));
     await tester.pumpAndSettle();
     expect(last!.queryParameters['minPriceCents'], '525');
     expect(last!.queryParameters['maxPriceCents'], '1000');
+    // The active range shows as a chip that clears the filter.
+    expect(find.text('\$5.25 – \$10'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear price filter'));
+    await tester.pumpAndSettle();
+    expect(last!.queryParameters.containsKey('minPriceCents'), isFalse);
+    expect(find.text('\$5.25 – \$10'), findsNothing);
+  });
+  testWidgets('filter sidebar rejects min above max and fills presets', (
+      tester,
+      ) async {
+    final repo = repository((_) async => page([]));
+    addTearDown(repo.close);
+    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Min price'),
+      '20',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Max price'),
+      '10',
+    );
+    await tester.tap(find.text('Show results'));
+    await tester.pumpAndSettle();
+    expect(find.text('Less than min'), findsOneWidget);
+    expect(find.text('Show results'), findsOneWidget); // still open
+    await tester.tap(find.text('\$10 – \$25'));
+    await tester.pumpAndSettle();
+    expect(find.text('Less than min'), findsNothing);
+    expect(find.widgetWithText(TextFormField, '10'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '25'), findsOneWidget);
   });
   testWidgets('late search responses cannot overwrite newer results', (
-    tester,
-  ) async {
+      tester,
+      ) async {
     final old = Completer<http.Response>();
     final repo = repository((request) async {
       if (request.url.queryParameters['q'] == 'old') return old.future;
@@ -163,8 +221,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
+            (widget) =>
+        widget is TextField &&
             widget.decoration?.hintText == 'Search LSU merch',
       ),
       'old',
@@ -173,8 +231,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.enterText(
       find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
+            (widget) =>
+        widget is TextField &&
             widget.decoration?.hintText == 'Search LSU merch',
       ),
       'new',
@@ -189,7 +247,7 @@ void main() {
   });
   testWidgets(
     'posting waits for success, prevents duplicate submits and refreshes browse',
-    (tester) async {
+        (tester) async {
       final pending = Completer<http.Response>();
       var posts = 0;
       var saved = false;
@@ -203,7 +261,7 @@ void main() {
       addTearDown(repo.close);
       await tester.pumpWidget(LsuPopApp(repository: repo));
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Post an item'));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextFormField, 'What are you selling?'),
@@ -238,13 +296,13 @@ void main() {
   );
   testWidgets('failed post preserves input and allows retry', (tester) async {
     final repo = repository(
-      (request) async =>
-          request.method == 'POST' ? http.Response('{}', 500) : page([]),
+          (request) async =>
+      request.method == 'POST' ? http.Response('{}', 500) : page([]),
     );
     addTearDown(repo.close);
     await tester.pumpWidget(LsuPopApp(repository: repo));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(FloatingActionButton));
+    await tester.tap(find.byTooltip('Post an item'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextFormField, 'What are you selling?'),
