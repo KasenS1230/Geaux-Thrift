@@ -1,128 +1,240 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../data/listing_repository.dart';
 import '../models/listing.dart';
 import '../widgets/listing_card.dart';
 import 'listing_detail_screen.dart';
 
-/// Tab 1: the grid of everything for sale.
 class BrowseTab extends StatefulWidget {
-  const BrowseTab({super.key, required this.query});
-
-  /// Text typed into the search bar up in the app bar.
+  const BrowseTab({
+    super.key,
+    required this.query,
+    required this.repository,
+    this.revision = 0,
+  });
   final String query;
-
+  final ListingRepository repository;
+  final int revision;
   @override
   State<BrowseTab> createState() => _BrowseTabState();
 }
 
 class _BrowseTabState extends State<BrowseTab> {
-  String _category = kCategories.first;
+  final _min = TextEditingController();
+  final _max = TextEditingController();
+  final _form = GlobalKey<FormState>();
+  String _category = 'All';
+  int? _minCents, _maxCents;
+  List<Listing> _items = [];
+  bool _loading = true, _more = false;
+  String? _error;
+  int _generation = 0;
+  Timer? _debounce;
 
-  List<Listing> get _visibleListings {
-    // TODO(team): move this filtering into a repository once the data is real,
-    // and add sorting (newest / price) plus pagination.
-    return mockListings
-        .where((listing) => listing.matches(widget.query))
-        .where((listing) => _category == 'All' || listing.category == _category)
-        .toList();
-  }
-
-  void _openListing(Listing listing) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ListingDetailScreen(listing: listing),
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
   @override
-  Widget build(BuildContext context) {
-    final listings = _visibleListings;
+  void didUpdateWidget(covariant BrowseTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query ||
+        oldWidget.revision != widget.revision) {
+      _debounce?.cancel();
+      // Invalidate requests immediately, before the new search starts.
+      _generation++;
+      _loading = true;
+      _error = null;
+      _debounce = Timer(const Duration(milliseconds: 300), () => _load());
+    }
+  }
 
-    return Column(
-      children: [
-        _CategoryBar(
-          selected: _category,
-          onSelected: (value) => setState(() => _category = value),
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _min.dispose();
+    _max.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({bool append = false}) async {
+    _debounce?.cancel();
+    final generation = ++_generation;
+    setState(() {
+      _loading = true;
+      _error = null;
+      if (!append) _items = [];
+    });
+    try {
+      final page = await widget.repository.fetch(
+        query: widget.query,
+        category: _category,
+        minPriceCents: _minCents,
+        maxPriceCents: _maxCents,
+        offset: append ? _items.length : 0,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _items = [..._items, ...page];
+        _more = page.length == 50;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loading = false;
+        _error = error is ListingApiException
+            ? error.message
+            : 'Could not load listings. Please try again.';
+      });
+    }
+  }
+
+  String? _validatePrice(String? value) =>
+      value == null || value.trim().isEmpty || parsePriceCents(value) != null
+      ? null
+      : 'Enter a valid price';
+
+  void _applyPrices() {
+    if (!_form.currentState!.validate()) return;
+    final min = parsePriceCents(_min.text), max = parsePriceCents(_max.text);
+    if (min != null && max != null && min > max) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Minimum price must not exceed maximum price'),
         ),
-        Expanded(
-          child: listings.isEmpty
-              ? const _EmptyState(
-                  icon: Icons.search_off,
-                  message: 'Nothing matches that search yet.',
+      );
+      return;
+    }
+    _minCents = min;
+    _maxCents = max;
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      SizedBox(
+        height: 52,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          children: [
+            for (final category in listingCategories)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(category),
+                  selected: _category == category,
+                  onSelected: (_) {
+                    _category = category;
+                    _load();
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+      Form(
+        key: _form,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _min,
+                  validator: _validatePrice,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Min price',
+                    prefixText: '\$ ',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _max,
+                  validator: _validatePrice,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Max price',
+                    prefixText: '\$ ',
+                  ),
+                ),
+              ),
+              TextButton(onPressed: _applyPrices, child: const Text('Apply')),
+            ],
+          ),
+        ),
+      ),
+      if (_loading) const LinearProgressIndicator(),
+      if (_error != null)
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Text(_error!, textAlign: TextAlign.center),
+              TextButton(
+                onPressed: () => _load(append: _items.isNotEmpty),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      Expanded(
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: _items.isEmpty
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    if (!_loading && _error == null)
+                      const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text(
+                          'No listings found. Try another search or post an item.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                  ],
                 )
               : GridView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 88),
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
                     childAspectRatio: 0.72,
                   ),
-                  itemCount: listings.length,
-                  itemBuilder: (context, index) {
-                    final listing = listings[index];
-                    return ListingCard(
-                      listing: listing,
-                      onTap: () => _openListing(listing),
-                    );
-                  },
+                  itemCount: _items.length,
+                  itemBuilder: (context, index) => ListingCard(
+                    listing: _items[index],
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            ListingDetailScreen(listing: _items[index]),
+                      ),
+                    ),
+                  ),
                 ),
         ),
-      ],
-    );
-  }
-}
-
-/// Horizontal row of category filter chips.
-class _CategoryBar extends StatelessWidget {
-  const _CategoryBar({required this.selected, required this.onSelected});
-
-  final String selected;
-  final ValueChanged<String> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: kCategories.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final category = kCategories[index];
-          return ChoiceChip(
-            label: Text(category),
-            selected: category == selected,
-            onSelected: (_) => onSelected(category),
-          );
-        },
       ),
-    );
-  }
-}
-
-/// Shared "nothing here" placeholder.
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.message});
-
-  final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          Text(message, style: Theme.of(context).textTheme.bodyMedium),
-        ],
-      ),
-    );
-  }
+      if (_more && !_loading && _error == null)
+        TextButton(
+          onPressed: () => _load(append: true),
+          child: const Text('Load more'),
+        ),
+    ],
+  );
 }

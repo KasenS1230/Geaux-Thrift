@@ -1,7 +1,6 @@
 /// One item somebody is selling.
 ///
-/// TODO(team): this is a plain in-memory object. When we add a backend
-/// (Firebase or our own API) give it `fromJson` / `toJson` and a real id.
+/// API prices are integer cents; the display model exposes dollars.
 class Listing {
   const Listing({
     required this.id,
@@ -28,6 +27,18 @@ class Listing {
 
   /// TODO(team): real photos. For now cards draw a placeholder box.
   final String? imageUrl;
+
+  factory Listing.fromJson(Map<String, dynamic> json) => Listing(
+    id: json['id'] as String,
+    title: json['title'] as String,
+    price: (json['priceCents'] as int) / 100,
+    sellerName: json['sellerName'] as String,
+    category: json['category'] as String,
+    size: json['size'] as String?,
+    condition: json['condition'] as String? ?? 'Good',
+    description: json['description'] as String? ?? '',
+    imageUrl: json['imageUrl'] as String?,
+  );
 
   String get formattedPrice => '\$${price.toStringAsFixed(2)}';
 
