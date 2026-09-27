@@ -8,7 +8,7 @@ import 'browse_tab.dart';
 import 'create_listing_screen.dart';
 import 'messages_tab.dart';
 
-/// The main page: a filter button and search bar on top, the current section in the middle, and
+/// The main page: the Geaux Thrift name, filter button and search bar on top, the current section in the middle, and
 /// an Instagram-style icon bar at the bottom (Browse, Sell, Messages).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.repository});
@@ -100,11 +100,20 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         )
             : null,
-        titleSpacing: onBrowse ? 0 : 16,
-        title: _SearchField(
-          controller: _searchController,
-          hintText: onBrowse ? 'Search LSU merch' : 'Search messages',
-          onChanged: (value) => setState(() => _query = value),
+        centerTitle: true,
+        toolbarHeight: 52,
+        title: const _Wordmark(),
+        // Search sits on its own row under the name, full width.
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(50),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: _SearchField(
+              controller: _searchController,
+              hintText: onBrowse ? 'Search LSU merch' : 'Search messages',
+              onChanged: (value) => setState(() => _query = value),
+            ),
+          ),
         ),
       ),
       // IndexedStack keeps each section alive, so switching back to Browse
@@ -239,7 +248,43 @@ class _NavIcon extends StatelessWidget {
   }
 }
 
-/// The rounded search box that lives in the app bar.
+/// The "Geaux Thrift" name in the top bar: heavy italic, white + LSU gold.
+class _Wordmark extends StatelessWidget {
+  const _Wordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    const base = TextStyle(
+      fontSize: 22,
+      fontWeight: FontWeight.w900,
+      fontStyle: FontStyle.italic,
+      letterSpacing: -0.4,
+      height: 1,
+    );
+    return Semantics(
+      header: true,
+      label: 'Geaux Thrift',
+      child: ExcludeSemantics(
+        child: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: 'Geaux',
+                style: base.copyWith(color: Colors.white),
+              ),
+              TextSpan(
+                text: ' Thrift',
+                style: base.copyWith(color: LsuColors.gold),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact frosted search pill that sits on the purple bar.
 class _SearchField extends StatelessWidget {
   const _SearchField({
     required this.controller,
@@ -253,23 +298,53 @@ class _SearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    OutlineInputBorder pill(Color color) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: BorderSide(color: color),
+    );
+
     return SizedBox(
-      height: 42,
+      height: 38,
       child: TextField(
         controller: controller,
         onChanged: onChanged,
         textInputAction: TextInputAction.search,
+        cursorColor: LsuColors.gold,
+        style: const TextStyle(color: Colors.white, fontSize: 15),
         decoration: InputDecoration(
           hintText: hintText,
-          prefixIcon: const Icon(Icons.search, size: 20),
+          hintStyle: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 15,
+          ),
+          prefixIcon: Icon(
+            Icons.search_rounded,
+            size: 20,
+            color: Colors.white.withValues(alpha: 0.75),
+          ),
+          // Clear (x) button, only once something is typed.
+          suffixIcon: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) => value.text.isEmpty
+                ? const SizedBox.shrink()
+                : IconButton(
+              tooltip: 'Clear search',
+              iconSize: 18,
+              color: Colors.white.withValues(alpha: 0.75),
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () {
+                controller.clear();
+                onChanged('');
+              },
+            ),
+          ),
           filled: true,
-          fillColor: Colors.white,
+          fillColor: Colors.white.withValues(alpha: 0.14),
           isDense: true,
           contentPadding: EdgeInsets.zero,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide.none,
-          ),
+          border: pill(Colors.transparent),
+          enabledBorder: pill(Colors.transparent),
+          focusedBorder: pill(Colors.white.withValues(alpha: 0.45)),
         ),
       ),
     );
