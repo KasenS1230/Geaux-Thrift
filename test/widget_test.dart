@@ -323,32 +323,4 @@ void main() {
       isNotNull,
     );
   });
-  testWidgets('adding a listing to the cart shows it on the cart screen', (
-      tester,
-      ) async {
-    final repo = repository((_) async => page([listing('Server Mug')]));
-    addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(GridView), const Offset(0, -100));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Server Mug'));
-    await tester.pumpAndSettle();
-    expect(find.text('Add to Cart'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -300));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Add to Cart'));
-    await tester.pump();
-    expect(find.text('Added to cart'), findsOneWidget);
-    expect(find.text('Remove from Cart'), findsOneWidget);
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('Cart'), findsOneWidget);
-    expect(find.text('1'), findsOneWidget);
-    await tester.tap(find.byTooltip('Cart'));
-    await tester.pumpAndSettle();
-    expect(find.text('Server Mug'), findsOneWidget);
-    expect(find.text('\$8.25'), findsWidgets);
-  });
 }

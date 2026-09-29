@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../models/cart.dart';
 import '../models/listing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/listing_photo.dart';
@@ -11,10 +10,9 @@ import '../widgets/listing_photo.dart';
 /// TODO(team): photo carousel (listings carry one photo today), seller profile
 /// link, save/favorite button, "similar items" row, and report-listing option.
 class ListingDetailScreen extends StatelessWidget {
-  const ListingDetailScreen({super.key, required this.listing, required this.cart});
+  const ListingDetailScreen({super.key, required this.listing});
 
   final Listing listing;
-  final Cart cart;
 
   @override
   Widget build(BuildContext context) {
@@ -80,37 +78,6 @@ class ListingDetailScreen extends StatelessWidget {
                   onTap: () {},
                 ),
                 const SizedBox(height: 16),
-                ListenableBuilder(
-                  listenable: cart,
-                  builder: (context, _) {
-                    final inCart = cart.contains(listing.id);
-                    return SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          if (inCart) {
-                            cart.removeItem(listing.id);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Removed from cart')),
-                            );
-                          } else {
-                            cart.addItem(listing);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Added to cart')),
-                            );
-                          }
-                        },
-                        icon: Icon(
-                          inCart
-                              ? Icons.remove_shopping_cart_outlined
-                              : Icons.add_shopping_cart_outlined,
-                        ),
-                        label: Text(inCart ? 'Remove from Cart' : 'Add to Cart'),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
