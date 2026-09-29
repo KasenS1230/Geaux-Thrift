@@ -6,14 +6,16 @@ import 'package:http/http.dart' as http;
 
 import '../models/listing.dart';
 
-const listingCategories = [
-  'All',
-  'Apparel',
-  'Game Day',
-  'Dorm',
-  'Tickets',
-  'Books',
-];
+/// The browse chip meaning "don't filter by category". The server has no such
+/// category and rejects it, so it never leaves the app.
+const anyCategory = 'All';
+
+/// Longest category name the server will store.
+const maxCategoryLength = 30;
+
+/// Categories to show until the server's list arrives, and if it never does.
+/// The server seeds exactly these, so a reachable server agrees with this list.
+const fallbackCategories = ['Apparel', 'Game Day', 'Dorm', 'Tickets', 'Books'];
 
 int? parsePriceCents(String input) {
   final value = input.trim();
@@ -121,9 +123,50 @@ class ListingRepository {
     }
   }
 
+  /// The categories the server currently knows, without the [anyCategory] chip.
+  Future<List<String>> fetchCategories() async {
+    final data = await _request(
+      'GET',
+      '/categories',
+      failureMessage: 'Could not load categories. Please try again.',
+    );
+    final categories = (data as Map<String, dynamic>)['categories'];
+    if (categories is! List) {
+      throw const ListingApiException('The server returned an invalid response.');
+    }
+    return categories.cast<String>();
+  }
+
+  /// Adds [name] to the shared category list and returns it as the server
+  /// stored it.
+  ///
+  /// Categories are case-insensitive server-side, so asking for one that
+  /// already exists succeeds and returns the existing spelling rather than
+  /// creating a near-duplicate.
+  Future<String> createCategory(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.length > maxCategoryLength) {
+      throw const ListingApiException(
+        'Use a category name of 1–$maxCategoryLength characters.',
+      );
+    }
+    if (trimmed.toLowerCase() == anyCategory.toLowerCase()) {
+      throw const ListingApiException(
+        '“$anyCategory” is reserved. Please choose another name.',
+      );
+    }
+    final data = await _request(
+      'POST',
+      '/categories',
+      body: {'name': trimmed},
+      failureMessage: 'The server would not accept that category name.',
+    );
+    return (data as Map<String, dynamic>)['name'] as String;
+  }
+
   Future<List<Listing>> fetch({
     String query = '',
-    String category = 'All',
+    String category = anyCategory,
     int? minPriceCents,
     int? maxPriceCents,
     int offset = 0,
@@ -133,7 +176,7 @@ class ListingRepository {
       '/listings',
       query: {
         if (query.trim().isNotEmpty) 'q': query.trim(),
-        if (category != 'All') 'category': category,
+        if (category != anyCategory) 'category': category,
         if (minPriceCents != null) 'minPriceCents': '$minPriceCents',
         if (maxPriceCents != null) 'maxPriceCents': '$maxPriceCents',
         'limit': '50',

@@ -36,7 +36,11 @@ class BrowseTab extends StatefulWidget {
 }
 
 class _BrowseTabState extends State<BrowseTab> {
-  String _category = 'All';
+  String _category = anyCategory;
+
+  /// Chips to show. Starts with the built-ins so the row is never empty, then
+  /// becomes whatever the server reports.
+  List<String> _categories = fallbackCategories;
   List<Listing> _items = [];
   bool _loading = true, _more = false;
   String? _error;
@@ -47,6 +51,29 @@ class _BrowseTabState extends State<BrowseTab> {
   void initState() {
     super.initState();
     _load();
+    _loadCategories();
+  }
+
+  /// Refreshes the chip row.
+  ///
+  /// A failure here is silent: the built-in chips still work, and the listing
+  /// request alongside it reports the same outage more usefully.
+  Future<void> _loadCategories() async {
+    try {
+      final categories = await widget.repository.fetchCategories();
+      if (!mounted) return;
+      setState(() {
+        _categories = categories;
+        // A category can only be added, never removed, so the selection stays
+        // valid; guard anyway rather than leave a chip selected that is gone.
+        if (_category != anyCategory && !categories.contains(_category)) {
+          _category = anyCategory;
+          _load();
+        }
+      });
+    } on ListingApiException {
+      // Keep whatever chips are already showing.
+    }
   }
 
   @override
@@ -59,6 +86,7 @@ class _BrowseTabState extends State<BrowseTab> {
       _generation++;
       _loading = true;
       _error = null;
+      if (oldWidget.revision != widget.revision) _loadCategories();
       _debounce = Timer(const Duration(milliseconds: 300), () => _load());
     } else if (oldWidget.minPriceCents != widget.minPriceCents ||
         oldWidget.maxPriceCents != widget.maxPriceCents) {
@@ -132,7 +160,7 @@ class _BrowseTabState extends State<BrowseTab> {
                   deleteButtonTooltipMessage: 'Clear price filter',
                 ),
               ),
-            for (final category in listingCategories)
+            for (final category in [anyCategory, ..._categories])
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: ChoiceChip(
@@ -163,7 +191,9 @@ class _BrowseTabState extends State<BrowseTab> {
         ),
       Expanded(
         child: RefreshIndicator(
-          onRefresh: _load,
+          onRefresh: () async {
+            await Future.wait([_load(), _loadCategories()]);
+          },
           child: _items.isEmpty
               ? ListView(
             physics: const AlwaysScrollableScrollPhysics(),

@@ -19,10 +19,22 @@ Map<String, dynamic> listing(String title) => {
 };
 http.Response page(List<Map<String, dynamic>> items) =>
     http.Response(jsonEncode({'listings': items}), 200);
+http.Response categoryPage(List<String> names) =>
+    http.Response(jsonEncode({'categories': names}), 200);
 ListingRepository repository(
-    Future<http.Response> Function(http.Request) handler,
-    ) => ListingRepository(
-  client: MockClient(handler),
+    Future<http.Response> Function(http.Request) handler, {
+      List<String> categories = fallbackCategories,
+    }) => ListingRepository(
+  // Browse and the sell form both load the category list when they open, so
+  // serve it here and let each test describe only the requests it cares about.
+  // A test that wants to drive /categories itself handles it in its handler
+  // and reaches this only for what it leaves unhandled.
+  client: MockClient((request) async {
+    if (request.url.path == '/categories' && request.method == 'GET') {
+      return categoryPage(categories);
+    }
+    return handler(request);
+  }),
   baseUrl: 'http://localhost:3000',
 );
 
@@ -274,7 +286,7 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('Post listing'),
         200,
-        scrollable: find.byType(Scrollable).last,
+        scrollable: find.byType(Scrollable).first,
       );
       await tester.tap(find.text('Post listing'));
       await tester.pump();
@@ -312,7 +324,7 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Post listing'),
       200,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(find.text('Post listing'));
     await tester.pumpAndSettle();
@@ -323,32 +335,159 @@ void main() {
       isNotNull,
     );
   });
-  testWidgets('adding a listing to the cart shows it on the cart screen', (
+
+  test('categories round-trip through the API', () async {
+    final repo = repository((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/categories');
+      // Whitespace is trimmed before it reaches the server.
+      expect(jsonDecode(request.body), {'name': 'Vinyl'});
+      return http.Response(jsonEncode({'name': 'Vinyl'}), 201);
+    });
+    expect(await repo.fetchCategories(), fallbackCategories);
+    expect(await repo.createCategory('  Vinyl  '), 'Vinyl');
+    repo.close();
+  });
+  test('reserved and oversized category names never reach the server', () async {
+    final repo = repository((_) async => fail('should not send a request'));
+    for (final name in ['', '   ', 'All', 'all', 'x' * 31]) {
+      await expectLater(
+        repo.createCategory(name),
+        throwsA(isA<ListingApiException>()),
+        reason: name,
+      );
+    }
+    repo.close();
+  });
+  testWidgets('browse chips come from the server and filter by the new one', (
       tester,
       ) async {
-    final repo = repository((_) async => page([listing('Server Mug')]));
+    Uri? last;
+    final repo = repository(
+          (request) async {
+        last = request.url;
+        return page([listing('Record')]);
+      },
+      categories: ['Apparel', 'Vinyl'],
+    );
     addTearDown(repo.close);
     await tester.pumpWidget(LsuPopApp(repository: repo));
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(GridView), const Offset(0, -100));
+    // 'All' is the app's own chip; the rest are whatever the server reports.
+    expect(find.widgetWithText(ChoiceChip, 'All'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Vinyl'), findsOneWidget);
+    // A built-in the server no longer lists is gone.
+    expect(find.widgetWithText(ChoiceChip, 'Books'), findsNothing);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Vinyl'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Server Mug'));
+    expect(last!.queryParameters['category'], 'Vinyl');
+  });
+  testWidgets('browse falls back to built-in chips when categories fail', (
+      tester,
+      ) async {
+    final repo = repository((request) async {
+      if (request.url.path == '/categories') return http.Response('{}', 500);
+      return page([listing('Mug')]);
+    });
+    addTearDown(repo.close);
+    await tester.pumpWidget(LsuPopApp(repository: repo));
     await tester.pumpAndSettle();
-    expect(find.text('Add to Cart'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    // The listings still loaded, so the outage must not take the chips with it.
+    expect(find.text('Mug'), findsOneWidget);
+    for (final name in ['All', ...fallbackCategories]) {
+      expect(find.widgetWithText(ChoiceChip, name), findsOneWidget, reason: name);
+    }
+  });
+  testWidgets('a new category is created, selected and used for the listing', (
+      tester,
+      ) async {
+    Map<String, dynamic>? posted;
+    final repo = repository(
+          (request) async {
+        if (request.url.path == '/categories' && request.method == 'POST') {
+          // The server owns the spelling: it answers with the stored casing.
+          expect(jsonDecode(request.body), {'name': 'vinyl'});
+          return http.Response(jsonEncode({'name': 'Vinyl'}), 201);
+        }
+        if (request.url.path == '/listings' && request.method == 'POST') {
+          posted = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode(listing('Record')), 201);
+        }
+        return page([]);
+      },
+      categories: ['Apparel', 'Books'],
+    );
+    addTearDown(repo.close);
+    await tester.pumpWidget(LsuPopApp(repository: repo));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add to Cart'));
-    await tester.pump();
-    expect(find.text('Added to cart'), findsOneWidget);
-    expect(find.text('Remove from Cart'), findsOneWidget);
+    await tester.tap(find.byTooltip('Post an item'));
     await tester.pumpAndSettle();
-    await tester.pageBack();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'What are you selling?'),
+      'Record',
+    );
+    await tester.enterText(find.widgetWithText(TextFormField, 'Price'), '8.25');
+    await tester.tap(find.widgetWithText(TextButton, 'Add new category'));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('Cart'), findsOneWidget);
-    expect(find.text('1'), findsOneWidget);
-    await tester.tap(find.byTooltip('Cart'));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Category name'),
+      'vinyl',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
-    expect(find.text('Server Mug'), findsOneWidget);
-    expect(find.text('\$8.25'), findsWidgets);
+    // The dialog closed and the stored spelling is now the selection.
+    expect(find.widgetWithText(TextField, 'Category name'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(DropdownButtonFormField<String>),
+        matching: find.text('Vinyl'),
+      ),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Post listing'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Post listing'));
+    await tester.pumpAndSettle();
+    expect(posted!['category'], 'Vinyl');
+  });
+  testWidgets('a rejected category name is reported without closing the dialog', (
+      tester,
+      ) async {
+    final repo = repository((request) async {
+      if (request.url.path == '/categories' && request.method == 'POST') {
+        return http.Response('{}', 400);
+      }
+      return page([]);
+    });
+    addTearDown(repo.close);
+    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Post an item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Add new category'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Category name'),
+      'Vinyl',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('would not accept'), findsOneWidget);
+    // Still open, with the typed name intact, so the user can fix it.
+    expect(find.widgetWithText(TextField, 'Category name'), findsOneWidget);
+    expect(find.text('Vinyl'), findsOneWidget);
+    // Cancelling leaves the original selection untouched.
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(DropdownButtonFormField<String>),
+        matching: find.text(fallbackCategories.first),
+      ),
+      findsOneWidget,
+    );
   });
 }
