@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/listing_repository.dart';
+import '../models/cart.dart';
 import '../models/listing.dart';
 import '../widgets/filter_drawer.dart';
 import '../widgets/listing_card.dart';
@@ -13,6 +14,7 @@ class BrowseTab extends StatefulWidget {
     super.key,
     required this.query,
     required this.repository,
+    required this.cart,
     this.revision = 0,
     this.minPriceCents,
     this.maxPriceCents,
@@ -20,6 +22,7 @@ class BrowseTab extends StatefulWidget {
   });
   final String query;
   final ListingRepository repository;
+  final Cart cart;
   final int revision;
 
   /// Price bounds chosen in the filter sidebar (null = no bound).
@@ -219,8 +222,10 @@ class _BrowseTabState extends State<BrowseTab> {
               listing: _items[index],
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) =>
-                      ListingDetailScreen(listing: _items[index]),
+                  builder: (_) => ListingDetailScreen(
+                    listing: _items[index],
+                    cart: widget.cart,
+                  ),
                 ),
               ),
             ),
