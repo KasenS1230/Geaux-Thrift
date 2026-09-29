@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../data/listing_repository.dart';
+import '../models/cart.dart';
 import '../theme/app_theme.dart';
 import '../widgets/filter_drawer.dart';
 
 import 'browse_tab.dart';
+import 'cart_screen.dart';
 import 'create_listing_screen.dart';
 import 'messages_tab.dart';
 
@@ -25,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _query = '';
   late final ListingRepository _repository =
       widget.repository ?? ListingRepository();
+  final Cart _cart = Cart();
   int _revision = 0;
 
   /// Which section is showing: 0 = Browse, 1 = Messages.
@@ -48,7 +51,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _searchController.dispose();
     if (widget.repository == null) _repository.close();
+    _cart.dispose();
     super.dispose();
+  }
+
+  void _openCart() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => CartScreen(cart: _cart)),
+    );
   }
 
   void _selectSection(int index) {
@@ -103,6 +113,22 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: true,
         toolbarHeight: 52,
         title: const _Wordmark(),
+        actions: [
+          ListenableBuilder(
+            listenable: _cart,
+            builder: (context, _) => IconButton(
+              tooltip: 'Cart',
+              onPressed: _openCart,
+              icon: Badge(
+                isLabelVisible: _cart.itemCount > 0,
+                label: Text('${_cart.itemCount}'),
+                backgroundColor: LsuColors.gold,
+                textColor: LsuColors.purple,
+                child: const Icon(Icons.shopping_cart_outlined),
+              ),
+            ),
+          ),
+        ],
         // Search sits on its own row under the name, full width.
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
@@ -124,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BrowseTab(
             query: _query,
             repository: _repository,
+            cart: _cart,
             revision: _revision,
             minPriceCents: _minPriceCents,
             maxPriceCents: _maxPriceCents,
