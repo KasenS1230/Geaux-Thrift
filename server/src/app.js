@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listingSelect } from './database.js';
 
-const categories = ['Apparel', 'Game Day', 'Dorm', 'Tickets', 'Books'];
 const maxPrice = 100_000_000;
 const maxImageBytes = 5 * 1024 * 1024;
 // Content type -> file extension plus the leading magic bytes every such file starts with.
@@ -17,6 +16,18 @@ const imageTypes = {
   'image/webp': { ext: 'webp', magic: [[0x52, 0x49, 0x46, 0x46]] },
 };
 const imageName = /^[0-9a-f-]{36}\.(jpg|png|webp)$/;
+// Anyone can append to the category list, so require a letter or digit:
+// punctuation-only names are junk, not categories.
+const categoryHasContent = /[\p{L}\p{N}]/u;
+// 'All' is the browse filter's "no category" sentinel, never a stored category.
+const reservedCategory = 'all';
+const maxCategoryLength = 30;
+/// Returns the category as stored, or null when it does not exist.
+/// Lookups are case-insensitive (the column is NOCASE), so this also maps a
+/// client's casing onto the stored casing.
+function findCategory(db, name) {
+  return db.prepare('SELECT name FROM categories WHERE name = ?').get(name)?.name ?? null;
+}
 class ApiError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -45,12 +56,12 @@ function imagePath(value, name) {
   }
   return value;
 }
-function validateListing(body) {
+function validateListing(body, db) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) invalid('Expected a JSON object');
   const allowed = ['title', 'priceCents', 'category', 'size', 'condition', 'description', 'imageUrl'];
   if (Object.keys(body).some(key => !allowed.includes(key))) invalid('Unknown listing field');
-  const category = text(body.category, 'category', 30);
-  if (!categories.includes(category)) invalid(`category must be one of: ${categories.join(', ')}`);
+  const category = findCategory(db, text(body.category, 'category', maxCategoryLength));
+  if (!category) invalid('category must be one listed by GET /categories');
   return {
     title: text(body.title, 'title', 120),
     priceCents: price(body.priceCents, 'priceCents'),
@@ -107,6 +118,26 @@ export function createApp(db, { allowedOrigin = '', imageDir } = {}) {
         db.prepare('SELECT 1').get();
         return send(res, 200, { status: 'ok' });
       }
+      if (url.pathname === '/categories' && req.method === 'GET') {
+        if ([...url.searchParams.keys()].length) invalid('Unknown or repeated query parameter');
+        const rows = db.prepare('SELECT name FROM categories ORDER BY name COLLATE NOCASE').all();
+        return send(res, 200, { categories: rows.map(row => row.name) });
+      }
+      if (url.pathname === '/categories' && req.method === 'POST') {
+        const body = await readJson(req);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) invalid('Expected a JSON object');
+        if (Object.keys(body).some(key => key !== 'name')) invalid('Unknown category field');
+        const name = text(body.name, 'name', maxCategoryLength);
+        if (!categoryHasContent.test(name)) invalid('name must contain a letter or number');
+        if (name.toLowerCase() === reservedCategory) invalid(`'All' is reserved and cannot be a category`);
+        // Adding a category that already exists is the same request twice, not an
+        // error: hand back the stored spelling so the client can select it.
+        const existing = findCategory(db, name);
+        if (existing) return send(res, 200, { name: existing });
+        db.prepare('INSERT INTO categories (name, createdAt) VALUES (?, ?)')
+          .run(name, new Date().toISOString());
+        return send(res, 201, { name }, { Location: '/categories' });
+      }
       if (url.pathname === '/listings' && req.method === 'GET') {
         const params = url.searchParams;
         const allowed = ['q', 'category', 'minPriceCents', 'maxPriceCents', 'limit', 'offset'];
@@ -120,9 +151,11 @@ export function createApp(db, { allowedOrigin = '', imageDir } = {}) {
           where.push("(instr(lower(title), lower(?)) > 0 OR instr(lower(description), lower(?)) > 0 OR instr(lower(category), lower(?)) > 0 OR instr(lower(sellers.name), lower(?)) > 0)");
           values.push(q, q, q, q);
         }
-        const category = params.get('category');
-        if (category !== null) {
-          if (!categories.includes(category)) invalid('Unknown category');
+        const rawCategory = params.get('category');
+        if (rawCategory !== null) {
+          // Match on the stored spelling so 'dorm' finds the same rows as 'Dorm'.
+          const category = findCategory(db, text(rawCategory, 'category', maxCategoryLength));
+          if (!category) invalid('Unknown category');
           where.push('category = ?'); values.push(category);
         }
         function integerParam(key, fallback, max) {
@@ -145,7 +178,7 @@ export function createApp(db, { allowedOrigin = '', imageDir } = {}) {
         return send(res, 200, { listings, limit, offset });
       }
       if (url.pathname === '/listings' && req.method === 'POST') {
-        const item = validateListing(await readJson(req));
+        const item = validateListing(await readJson(req), db);
         const id = randomUUID();
         db.prepare(`INSERT INTO listings
           (id, title, priceCents, sellerId, category, size, condition, description, imageUrl, createdAt)

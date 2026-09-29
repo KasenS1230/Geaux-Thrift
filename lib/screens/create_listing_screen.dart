@@ -24,8 +24,52 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _priceController = TextEditingController();
   final _descriptionController = TextEditingController();
 
-  // 'All' is a browse filter, not a real category, so skip it here.
-  late String _category = listingCategories[1];
+  /// Categories offered in the dropdown. Seeded with the built-ins so the form
+  /// is usable immediately, then replaced by the server's list.
+  List<String> _categories = fallbackCategories;
+  String _category = fallbackCategories.first;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  /// A failure here leaves the built-in categories in place; posting will
+  /// still work, and the submit itself reports any real outage.
+  Future<void> _loadCategories() async {
+    try {
+      final categories = await widget.repository.fetchCategories();
+      if (!mounted || categories.isEmpty) return;
+      setState(() {
+        _categories = categories;
+        if (!categories.contains(_category)) _category = categories.first;
+      });
+    } on ListingApiException {
+      // Keep the built-ins.
+    }
+  }
+
+  /// Asks for a name, creates it on the server and selects it.
+  ///
+  /// The server owns the spelling: asking for one that already exists returns
+  /// the stored casing, so 'dorm' selects the existing 'Dorm' rather than
+  /// adding a second entry that differs only in case.
+  Future<void> _addCategory() async {
+    final created = await showDialog<String>(
+      context: context,
+      builder: (_) => _NewCategoryDialog(repository: widget.repository),
+    );
+    if (created == null || !mounted) return;
+    setState(() {
+      if (!_categories.contains(created)) {
+        _categories = [..._categories, created]..sort(
+          (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+        );
+      }
+      _category = created;
+    });
+  }
 
   @override
   void dispose() {
@@ -253,16 +297,31 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
+              // DropdownButtonFormField only reads initialValue once, so key it
+              // to the selection: adding a category has to move the dropdown.
+              key: ValueKey(_category),
               initialValue: _category,
               decoration: const InputDecoration(
                 labelText: 'Category',
                 border: OutlineInputBorder(),
               ),
               items: [
-                for (final category in listingCategories.skip(1))
+                for (final category in _categories)
                   DropdownMenuItem(value: category, child: Text(category)),
               ],
-              onChanged: (value) => setState(() => _category = value!),
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _category = value!),
+            ),
+            // Deliberately not an entry in the dropdown: an item there reads as
+            // a selection, and the field would show it as the chosen category.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _saving ? null : _addCategory,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add new category'),
+              ),
             ),
             const SizedBox(height: 16),
             TextFormField(
@@ -293,4 +352,74 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
       ),
     );
   }
+}
+
+/// Names a new category and creates it, popping with the name the server
+/// stored. Owns its controller so the field survives the closing animation.
+class _NewCategoryDialog extends StatefulWidget {
+  const _NewCategoryDialog({required this.repository});
+  final ListingRepository repository;
+
+  @override
+  State<_NewCategoryDialog> createState() => _NewCategoryDialogState();
+}
+
+class _NewCategoryDialogState extends State<_NewCategoryDialog> {
+  final _controller = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final name = await widget.repository.createCategory(_controller.text);
+      if (mounted) Navigator.of(context).pop(name);
+    } catch (error) {
+      if (!mounted) return;
+      // Stay open with the typed name intact so the mistake can be fixed.
+      setState(() {
+        _saving = false;
+        _error = error is ListingApiException
+            ? error.message
+            : 'Could not add that category. Please try again.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('New category'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      maxLength: maxCategoryLength,
+      textCapitalization: TextCapitalization.words,
+      decoration: InputDecoration(
+        labelText: 'Category name',
+        border: const OutlineInputBorder(),
+        errorText: _error,
+      ),
+      onSubmitted: (_) => _submit(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _saving ? null : () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: _saving ? null : _submit,
+        child: Text(_saving ? 'Adding…' : 'Add'),
+      ),
+    ],
+  );
 }

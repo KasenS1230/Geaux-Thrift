@@ -195,3 +195,71 @@ test('unknown or missing images are 404, not server errors', async t => {
     assert.equal((await app.request(path)).status, 404, path);
   }
 });
+test('seeds the built-in categories and serves them sorted', async t => {
+  const app = await fixture(t);
+  const { categories } = await (await app.request('/categories')).json();
+  assert.deepEqual(categories, ['Apparel', 'Books', 'Dorm', 'Game Day', 'Tickets']);
+  assert.equal((await app.request('/categories?unknown=1')).status, 400);
+});
+test('a created category becomes usable for posting and filtering', async t => {
+  const app = await fixture(t);
+  const created = await app.request('/categories', post({ name: 'Vinyl' }));
+  assert.equal(created.status, 201);
+  assert.deepEqual(await created.json(), { name: 'Vinyl' });
+  const { categories } = await (await app.request('/categories')).json();
+  assert.ok(categories.includes('Vinyl'));
+  // The whole point: a listing can now be posted in it, and filtered by it.
+  assert.equal((await app.request('/listings', post({ ...item, category: 'Vinyl' }))).status, 201);
+  const found = await (await app.request('/listings?category=Vinyl')).json();
+  assert.equal(found.listings.length, 1);
+  assert.equal(found.listings[0].category, 'Vinyl');
+});
+test('categories are case-insensitive and never duplicated', async t => {
+  const app = await fixture(t);
+  // Re-adding an existing category is the same request twice, not an error:
+  // it reports the stored spelling instead of creating a near-duplicate.
+  for (const name of ['Dorm', 'dorm', 'DORM', '  dorm  ']) {
+    const response = await app.request('/categories', post({ name }));
+    assert.equal(response.status, 200, name);
+    assert.deepEqual(await response.json(), { name: 'Dorm' }, name);
+  }
+  const { categories } = await (await app.request('/categories')).json();
+  assert.equal(categories.filter(name => name.toLowerCase() === 'dorm').length, 1);
+  // A listing posted in the wrong casing is stored under the canonical name.
+  const posted = await (await app.request('/listings', post({ ...item, category: 'dOrM' }))).json();
+  assert.equal(posted.category, 'Dorm');
+  assert.equal((await (await app.request('/listings?category=dorm')).json()).listings.length, 1);
+});
+test('rejects reserved, empty and malformed category names', async t => {
+  const app = await fixture(t);
+  for (const body of [null, [], {}, { name: '' }, { name: '   ' }, { name: 'x'.repeat(31) },
+    { name: 'All' }, { name: 'all' }, { name: '---' }, { name: '  ' }, { name: 42 },
+    { name: 'Vinyl', extra: 1 }]) {
+    const response = await app.request('/categories', post(body));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).error.code, 'invalid_request');
+  }
+  const { categories } = await (await app.request('/categories')).json();
+  assert.equal(categories.length, 5);
+});
+test('unknown categories are rejected for posting and filtering', async t => {
+  const app = await fixture(t);
+  assert.equal((await app.request('/listings', post({ ...item, category: 'Nonexistent' }))).status, 400);
+  assert.equal((await app.request('/listings?category=Nonexistent')).status, 400);
+});
+test('a v1 database gains the categories its listings already use', async t => {
+  // Contributors have existing databases; migration 2 must not orphan their rows.
+  const directory = mkdtempSync(join(tmpdir(), 'lsupop-v1-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = join(directory, 'listings.sqlite');
+  const first = await start(file);
+  await first.request('/categories', post({ name: 'Vintage' }));
+  await first.request('/listings', post({ ...item, category: 'Vintage' }));
+  await first.close();
+  // Reopening runs no migration, but must still see the category and its listing.
+  const second = await start(file);
+  t.after(second.close);
+  const { categories } = await (await second.request('/categories')).json();
+  assert.ok(categories.includes('Vintage'));
+  assert.equal((await (await second.request('/listings?category=Vintage')).json()).listings.length, 1);
+});
