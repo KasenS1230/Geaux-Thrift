@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lsupop/data/message_store.dart';
 import 'package:lsupop/data/mock_data.dart';
 import 'package:lsupop/models/conversation.dart';
 import 'package:lsupop/screens/chat_screen.dart';
@@ -11,11 +12,26 @@ Widget host(Widget child) => MaterialApp(
   home: Scaffold(body: child),
 );
 
+/// A loaded store backed by memory, so these tests need no platform channel.
+/// With no [seed] it starts from the demo threads, same as a first run.
+Future<MessageStore> loadedStore({
+  List<Conversation>? seed,
+  MessageStorage? storage,
+}) async {
+  final store = MessageStore(
+    storage: storage ?? InMemoryMessageStorage(),
+    seed: seed,
+  );
+  await store.load();
+  return store;
+}
+
 void main() {
   testWidgets('messages tab lists every conversation with its last message', (
     tester,
   ) async {
-    await tester.pumpWidget(host(const MessagesTab(query: '')));
+    final store = await loadedStore();
+    await tester.pumpWidget(host(MessagesTab(query: '', store: store)));
     await tester.pumpAndSettle();
     expect(find.byType(ListTile), findsNWidgets(mockConversations.length));
     for (final thread in mockConversations) {
@@ -25,7 +41,8 @@ void main() {
     }
   });
   testWidgets('the search query narrows the conversation list', (tester) async {
-    await tester.pumpWidget(host(const MessagesTab(query: 'priya')));
+    final store = await loadedStore();
+    await tester.pumpWidget(host(MessagesTab(query: 'priya', store: store)));
     await tester.pumpAndSettle();
     expect(find.byType(ListTile), findsOneWidget);
     expect(find.text('Priya R.'), findsOneWidget);
@@ -34,13 +51,27 @@ void main() {
   testWidgets('a query matching nothing shows the empty message', (
     tester,
   ) async {
-    await tester.pumpWidget(host(const MessagesTab(query: 'nobody at all')));
+    final store = await loadedStore();
+    await tester.pumpWidget(
+      host(MessagesTab(query: 'nobody at all', store: store)),
+    );
     await tester.pumpAndSettle();
     expect(find.text('No conversations yet.'), findsOneWidget);
     expect(find.byType(ListTile), findsNothing);
   });
+  testWidgets('the list waits for the store instead of flashing empty', (
+    tester,
+  ) async {
+    // Not loaded: no load() call, so isLoaded is still false.
+    final store = MessageStore(storage: InMemoryMessageStorage());
+    await tester.pumpWidget(host(MessagesTab(query: '', store: store)));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('No conversations yet.'), findsNothing);
+  });
   testWidgets('only unread conversations show the gold dot', (tester) async {
-    await tester.pumpWidget(host(const MessagesTab(query: '')));
+    final store = await loadedStore();
+    await tester.pumpWidget(host(MessagesTab(query: '', store: store)));
     await tester.pumpAndSettle();
     final unread = mockConversations.where((thread) => thread.unread).length;
     expect(
@@ -54,7 +85,8 @@ void main() {
     );
   });
   testWidgets('tapping a conversation opens its thread', (tester) async {
-    await tester.pumpWidget(host(const MessagesTab(query: '')));
+    final store = await loadedStore();
+    await tester.pumpWidget(host(MessagesTab(query: '', store: store)));
     await tester.pumpAndSettle();
     final thread = mockConversations.first;
     await tester.tap(find.text(thread.otherUserName));
@@ -70,8 +102,10 @@ void main() {
   testWidgets('sending a message appends it and clears the field', (
     tester,
   ) async {
-    final thread = mockConversations.first;
-    await tester.pumpWidget(host(ChatScreen(conversation: thread)));
+    final store = await loadedStore();
+    await tester.pumpWidget(
+      host(ChatScreen(store: store, conversationId: 'c1')),
+    );
     await tester.enterText(find.byType(TextField), 'Meet at the Union?');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
@@ -84,8 +118,9 @@ void main() {
   testWidgets('submitting from the keyboard sends the message too', (
     tester,
   ) async {
+    final store = await loadedStore();
     await tester.pumpWidget(
-      host(ChatScreen(conversation: mockConversations.first)),
+      host(ChatScreen(store: store, conversationId: 'c1')),
     );
     await tester.enterText(find.byType(TextField), 'On my way');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -95,46 +130,86 @@ void main() {
   testWidgets('blank and whitespace-only messages are not sent', (
     tester,
   ) async {
-    final thread = mockConversations.first;
-    await tester.pumpWidget(host(ChatScreen(conversation: thread)));
-    final before = thread.messages.length;
+    final store = await loadedStore();
+    final before = store.byId('c1')!.messages.length;
+    await tester.pumpWidget(
+      host(ChatScreen(store: store, conversationId: 'c1')),
+    );
     await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '    ');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<ListView>(find.byType(ListView))
-          .childrenDelegate
-          .estimatedChildCount,
-      before,
-    );
+    expect(store.byId('c1')!.messages.length, before);
   });
   testWidgets('sending a message does not mutate the shared demo data', (
     tester,
   ) async {
     final thread = mockConversations.first;
     final before = thread.messages.length;
-    await tester.pumpWidget(host(ChatScreen(conversation: thread)));
+    final store = await loadedStore();
+    await tester.pumpWidget(
+      host(ChatScreen(store: store, conversationId: thread.id)),
+    );
     await tester.enterText(find.byType(TextField), 'Local only');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
     expect(thread.messages.length, before);
   });
+  testWidgets('a sent message is still there after leaving and reopening', (
+    tester,
+  ) async {
+    final store = await loadedStore();
+    await tester.pumpWidget(host(MessagesTab(query: '', store: store)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kasen S.'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Still here?');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pumpAndSettle();
+
+    // Back out to the list, then open the same thread again.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsNothing);
+    await tester.tap(find.text('Kasen S.'));
+    await tester.pumpAndSettle();
+    expect(find.text('Still here?'), findsOneWidget);
+  });
+  testWidgets('a thread that disappears does not crash the chat screen', (
+    tester,
+  ) async {
+    final store = await loadedStore();
+    await tester.pumpWidget(
+      host(ChatScreen(store: store, conversationId: 'not-a-thread')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('This conversation is no longer here.'), findsOneWidget);
+  });
   testWidgets('my bubbles sit right in purple, theirs left in white', (
     tester,
   ) async {
-    final thread = Conversation(
-      id: 'c9',
-      otherUserName: 'Alyssa B.',
-      listingTitle: 'LSU Mike the Tiger Mug',
-      messages: [
-        Message(text: 'Mine', sentByMe: true, sentAt: DateTime(2026, 1, 1)),
-        Message(text: 'Theirs', sentByMe: false, sentAt: DateTime(2026, 1, 2)),
+    final store = await loadedStore(
+      seed: [
+        Conversation(
+          id: 'c9',
+          otherUserName: 'Alyssa B.',
+          listingTitle: 'LSU Mike the Tiger Mug',
+          messages: [
+            Message(text: 'Mine', sentByMe: true, sentAt: DateTime(2026, 1, 1)),
+            Message(
+              text: 'Theirs',
+              sentByMe: false,
+              sentAt: DateTime(2026, 1, 2),
+            ),
+          ],
+        ),
       ],
     );
-    await tester.pumpWidget(host(ChatScreen(conversation: thread)));
+    await tester.pumpWidget(
+      host(ChatScreen(store: store, conversationId: 'c9')),
+    );
     await tester.pumpAndSettle();
     Align bubble(String text) => tester.widget<Align>(
       find.ancestor(of: find.text(text), matching: find.byType(Align)).first,

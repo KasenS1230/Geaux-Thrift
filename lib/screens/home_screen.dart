@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/listing_repository.dart';
+import '../data/message_store.dart';
 import '../models/cart.dart';
 import '../theme/app_theme.dart';
 import '../widgets/filter_drawer.dart';
@@ -13,8 +14,9 @@ import 'messages_tab.dart';
 /// The main page: the Geaux Thrift name, filter button and search bar on top, the current section in the middle, and
 /// an Instagram-style icon bar at the bottom (Browse, Sell, Messages).
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.repository});
+  const HomeScreen({super.key, this.repository, this.messageStore});
   final ListingRepository? repository;
+  final MessageStore? messageStore;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -27,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _query = '';
   late final ListingRepository _repository =
       widget.repository ?? ListingRepository();
+  late final MessageStore _messages = widget.messageStore ?? MessageStore();
   final Cart _cart = Cart();
   int _revision = 0;
 
@@ -40,6 +43,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  @override
+  void initState() {
+    super.initState();
+    // Pulls the saved threads off the device; MessagesTab shows a spinner
+    // until this lands.
+    if (!_messages.isLoaded) _messages.load();
+  }
+
   void _setPriceFilter(int? minCents, int? maxCents) {
     setState(() {
       _minPriceCents = minCents;
@@ -51,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _searchController.dispose();
     if (widget.repository == null) _repository.close();
+    if (widget.messageStore == null) _messages.dispose();
     _cart.dispose();
     super.dispose();
   }
@@ -156,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
             maxPriceCents: _maxPriceCents,
             onClearPrice: () => _setPriceFilter(null, null),
           ),
-          MessagesTab(query: _query),
+          MessagesTab(query: _query, store: _messages),
         ],
       ),
       bottomNavigationBar: _BottomBar(
