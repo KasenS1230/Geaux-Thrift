@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:lsupop/main.dart';
 import 'package:lsupop/data/listing_repository.dart';
+import 'package:lsupop/data/message_store.dart';
 
 Map<String, dynamic> listing(String title) => {
   'id': title,
@@ -37,6 +38,18 @@ ListingRepository repository(
   }),
   baseUrl: 'http://localhost:3000',
 );
+
+/// An already-loaded store over memory.
+///
+/// HomeScreen keeps the Messages tab mounted inside its IndexedStack, so a
+/// store still loading leaves a spinner on screen and pumpAndSettle never
+/// settles. Injecting one skips the real shared_preferences plugin, which
+/// never answers under flutter_test.
+MessageStore messageStore() {
+  final store = MessageStore(storage: InMemoryMessageStorage());
+  unawaited(store.load());
+  return store;
+}
 
 void main() {
   test('money is parsed exactly and invalid prices are rejected', () {
@@ -107,7 +120,7 @@ void main() {
       ) async {
     final repo = repository((_) async => page([listing('Server Mug')]));
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Browse'), findsOneWidget);
     expect(find.byTooltip('Messages'), findsOneWidget);
@@ -120,7 +133,7 @@ void main() {
       ) async {
     final repo = repository((_) async => page([listing('Server Mug')]));
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     bool hasHint(String hint) => find
         .byWidgetPredicate(
@@ -143,7 +156,7 @@ void main() {
           (_) async => failed ? http.Response('{}', 500) : page([]),
     );
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     expect(find.text('Retry'), findsOneWidget);
     failed = false;
@@ -158,7 +171,7 @@ void main() {
       return page([]);
     });
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byWidgetPredicate(
@@ -198,7 +211,7 @@ void main() {
       ) async {
     final repo = repository((_) async => page([]));
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Filters'));
     await tester.pumpAndSettle();
@@ -229,7 +242,7 @@ void main() {
       return page([listing(request.url.queryParameters['q'] ?? 'Initial')]);
     });
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byWidgetPredicate(
@@ -271,7 +284,7 @@ void main() {
         return page(saved ? [listing('New Mug')] : []);
       });
       addTearDown(repo.close);
-      await tester.pumpWidget(LsuPopApp(repository: repo));
+      await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Post an item'));
       await tester.pumpAndSettle();
@@ -312,7 +325,7 @@ void main() {
       request.method == 'POST' ? http.Response('{}', 500) : page([]),
     );
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Post an item'));
     await tester.pumpAndSettle();
@@ -371,7 +384,7 @@ void main() {
       categories: ['Apparel', 'Vinyl'],
     );
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     // 'All' is the app's own chip; the rest are whatever the server reports.
     expect(find.widgetWithText(ChoiceChip, 'All'), findsOneWidget);
@@ -390,7 +403,7 @@ void main() {
       return page([listing('Mug')]);
     });
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     // The listings still loaded, so the outage must not take the chips with it.
     expect(find.text('Mug'), findsOneWidget);
@@ -418,7 +431,7 @@ void main() {
       categories: ['Apparel', 'Books'],
     );
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Post an item'));
     await tester.pumpAndSettle();
@@ -463,7 +476,7 @@ void main() {
       return page([]);
     });
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Post an item'));
     await tester.pumpAndSettle();
@@ -495,7 +508,7 @@ void main() {
       ) async {
     final repo = repository((_) async => page([listing('Server Mug')]));
     addTearDown(repo.close);
-    await tester.pumpWidget(LsuPopApp(repository: repo));
+    await tester.pumpWidget(LsuPopApp(repository: repo, messageStore: messageStore()));
     await tester.pumpAndSettle();
     await tester.drag(find.byType(GridView), const Offset(0, -100));
     await tester.pumpAndSettle();

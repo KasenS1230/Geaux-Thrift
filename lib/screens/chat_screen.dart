@@ -1,17 +1,25 @@
 import 'package:flutter/material.dart';
 
+import '../data/message_store.dart';
 import '../models/conversation.dart';
 import '../theme/app_theme.dart';
 
 /// One message thread.
 ///
-/// TODO(team): messages are kept in local state, so they disappear when you
-/// leave the screen. Hook this up to the backend and add read receipts,
-/// images, and an offer flow.
+/// Reads and writes through [MessageStore], so a sent message survives leaving
+/// the screen and restarting the app. It stays on this device — see
+/// [MessageStore] for why there is no server call here.
+///
+/// TODO(team): add read receipts, images, and an offer flow.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.conversation});
+  const ChatScreen({
+    super.key,
+    required this.store,
+    required this.conversationId,
+  });
 
-  final Conversation conversation;
+  final MessageStore store;
+  final String conversationId;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -19,7 +27,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
-  late final List<Message> _messages = [...widget.conversation.messages];
 
   @override
   void dispose() {
@@ -28,71 +35,81 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _send() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _messages.add(
-        Message(text: text, sentByMe: true, sentAt: DateTime.now()),
-      );
-      _controller.clear();
-    });
+    final text = _controller.text;
+    if (text.trim().isEmpty) return;
+    _controller.clear();
+    widget.store.send(widget.conversationId, text);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.conversation.otherUserName),
-            Text(
-              widget.conversation.listingTitle,
-              style: const TextStyle(fontSize: 12, color: Colors.white70),
-            ),
-          ],
-        ),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) =>
-                  _MessageBubble(message: _messages[index]),
+    return ListenableBuilder(
+      listenable: widget.store,
+      builder: (context, _) {
+        final conversation = widget.store.byId(widget.conversationId);
+        if (conversation == null) {
+          // The thread was removed out from under us; nothing to show.
+          return const Scaffold(
+            body: Center(child: Text('This conversation is no longer here.')),
+          );
+        }
+        final messages = conversation.messages;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(conversation.otherUserName),
+                Text(
+                  conversation.listingTitle,
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+              ],
             ),
           ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      onSubmitted: (_) => _send(),
-                      decoration: InputDecoration(
-                        hintText: 'Message',
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
+          body: Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) =>
+                      _MessageBubble(message: messages[index]),
+                ),
+              ),
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _controller,
+                          onSubmitted: (_) => _send(),
+                          decoration: InputDecoration(
+                            hintText: 'Message',
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                      IconButton(
+                        onPressed: _send,
+                        icon: const Icon(Icons.send, color: LsuColors.purple),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    onPressed: _send,
-                    icon: const Icon(Icons.send, color: LsuColors.purple),
-                  ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
