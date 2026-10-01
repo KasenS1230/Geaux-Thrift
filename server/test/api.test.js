@@ -263,3 +263,100 @@ test('a v1 database gains the categories its listings already use', async t => {
   assert.ok(categories.includes('Vintage'));
   assert.equal((await (await second.request('/listings?category=Vintage')).json()).listings.length, 1);
 });
+test('optional listing fields are trimmed, defaulted and kept nullable', async t => {
+  const app = await fixture(t);
+  const full = await (await app.request('/listings', post({
+    ...item, size: '  M  ', condition: '  Like new  ', description: '  Barely worn  ',
+  }))).json();
+  assert.equal(full.size, 'M');
+  assert.equal(full.condition, 'Like new');
+  assert.equal(full.description, 'Barely worn');
+  // Omitting them is allowed; size stays null and condition falls back to Good.
+  const bare = await (await app.request('/listings', post({
+    title: 'Mug', priceCents: 800, category: 'Dorm',
+  }))).json();
+  assert.equal(bare.size, null);
+  assert.equal(bare.condition, 'Good');
+  assert.equal(bare.description, '');
+  // An explicit null size means "this item has no size", not a bad request.
+  assert.equal((await (await app.request('/listings', post({ ...item, size: null }))).json()).size, null);
+});
+test('accepts the documented boundary values', async t => {
+  const app = await fixture(t);
+  for (const body of [{ ...item, priceCents: 0 }, { ...item, priceCents: 100_000_000 },
+    { ...item, title: 'x'.repeat(120) }, { ...item, description: 'x'.repeat(5000) },
+    { ...item, size: 'x'.repeat(30) }, { ...item, condition: 'x'.repeat(50) }]) {
+    assert.equal((await app.request('/listings', post(body))).status, 201, JSON.stringify(body).slice(0, 60));
+  }
+  for (const query of ['limit=1', 'limit=100', 'offset=1000000', 'minPriceCents=0&maxPriceCents=100000000']) {
+    assert.equal((await app.request(`/listings?${query}`)).status, 200, query);
+  }
+  assert.equal((await app.request('/listings?offset=1000001')).status, 400);
+});
+test('rejects oversized optional listing fields', async t => {
+  const app = await fixture(t);
+  for (const body of [{ ...item, description: 'x'.repeat(5001) },
+    { ...item, size: 'x'.repeat(31) }, { ...item, condition: 'x'.repeat(51) },
+    { ...item, category: 'x'.repeat(31) }]) {
+    assert.equal((await app.request('/listings', post(body))).status, 400, JSON.stringify(body).slice(0, 60));
+  }
+  assert.equal((await (await app.request('/listings')).json()).listings.length, 0);
+  // The optional fields have a fallback, so a blank one means "left out"
+  // rather than a bad request, and is stored trimmed.
+  const blank = await (await app.request('/listings', post({ ...item, condition: ' ', description: ' ' }))).json();
+  assert.equal(blank.condition, '');
+  assert.equal(blank.description, '');
+});
+test('browse results echo the paging that produced them', async t => {
+  const app = await fixture(t);
+  await app.request('/listings', post(item));
+  const defaults = await (await app.request('/listings')).json();
+  assert.equal(defaults.limit, 50);
+  assert.equal(defaults.offset, 0);
+  const paged = await (await app.request('/listings?limit=10&offset=5')).json();
+  assert.equal(paged.limit, 10);
+  assert.equal(paged.offset, 5);
+  // Paging past the end is an empty page, not an error.
+  assert.deepEqual(paged.listings, []);
+});
+test('listings come back newest first', async t => {
+  const app = await fixture(t);
+  for (const title of ['First', 'Second', 'Third']) {
+    await app.request('/listings', post({ ...item, title }));
+    // createdAt is millisecond ISO text, so posts inside one millisecond
+    // tie and fall back to a random id: space them out to test the order.
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  const { listings } = await (await app.request('/listings')).json();
+  assert.deepEqual(listings.map(listing => listing.title), ['Third', 'Second', 'First']);
+});
+test('a blank keyword filters nothing', async t => {
+  const app = await fixture(t);
+  await app.request('/listings', post(item));
+  for (const query of ['q=', 'q=%20%20']) {
+    assert.equal((await (await app.request(`/listings?${query}`)).json()).listings.length, 1, query);
+  }
+});
+test('price filters exclude listings outside the range', async t => {
+  const app = await fixture(t);
+  await app.request('/listings', post({ ...item, priceCents: 500 }));
+  await app.request('/listings', post({ ...item, priceCents: 1500 }));
+  const cheap = await (await app.request('/listings?maxPriceCents=999')).json();
+  assert.deepEqual(cheap.listings.map(listing => listing.priceCents), [500]);
+  const dear = await (await app.request('/listings?minPriceCents=1000')).json();
+  assert.deepEqual(dear.listings.map(listing => listing.priceCents), [1500]);
+  assert.equal((await (await app.request('/listings?minPriceCents=600&maxPriceCents=1400')).json()).listings.length, 0);
+});
+test('unimplemented methods are 404 rather than silent successes', async t => {
+  const app = await fixture(t);
+  const saved = await (await app.request('/listings', post(item))).json();
+  for (const [path, method] of [['/listings', 'PUT'], ['/listings', 'DELETE'],
+    ['/listings', 'PATCH'], [`/listings/${saved.id}`, 'DELETE'], ['/categories', 'DELETE'],
+    ['/health', 'POST'], ['/images', 'GET'], ['/listings/', 'GET'], ['/', 'GET']]) {
+    const response = await app.request(path, { method });
+    assert.equal(response.status, 404, `${method} ${path}`);
+    assert.equal((await response.json()).error.code, 'not_found');
+  }
+  // Nothing above touched the stored listing.
+  assert.equal((await (await app.request('/listings')).json()).listings.length, 1);
+});
